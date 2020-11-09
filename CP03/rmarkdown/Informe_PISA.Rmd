@@ -1,0 +1,191 @@
+---
+title: "GAM y Splines del informe PISA 2006"
+author: "Iker Aguirre Otaegui"
+date: "11/8/2020"
+output: html_document
+---
+
+### Objetivos del trabajo.
+
+modelizar la relación entre la puntuación media (OSS) del dataset "pisasci2006" y el resto de variables, utilizando modelos de splines y GAM.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Carga de librerías. 
+
+```{r}
+library(here) 
+library(tidyverse)
+library(janitor) 
+library(skimr) 
+library(magrittr) 
+library(corrplot) 
+library(ggcorrplot)  
+library(PerformanceAnalytics) 
+library(leaps) 
+library(corrplot)
+library(car)
+library(boot)
+library(gam)
+```
+
+## 2. Carga de la base de datos.
+
+```{r}
+pisa_raw <- read_csv("pisasci2006.csv")
+```
+
+## 3. Exploración preeliminar de datos raw.
+
+```{r}
+str(pisa_raw)
+```
+
+```{r}
+head(pisa_raw)
+```
+
+```{r}
+skim(pisa_raw)
+```
+
+## 4. Limpieza de los datos.
+
+Habiendo visto la composición de los datos en el dataset, realizo varias modificaciones que considero adecuadas para posteriores análisis. Entre ellos:
+
+1. Omisión de valores NA.
+
+2. Rescribir el nombre variables a un formato adecuado.
+
+3. Elimino variable "Country".
+
+```{r}
+pisa <- na.omit(pisa_raw)
+pisa %<>% clean_names()
+pisa$country = NULL
+pisa
+```
+
+# 5. Análisis exploratorio de datos filtrados.
+
+```{r}
+head(pisa)
+```
+
+```{r}
+skim(pisa)
+```
+
+```{r}
+corr_pisa <- cor(pisa)
+corrplot(corr_pisa, type = "upper")
+```
+
+Se puede observar que las variables "issues", "explain" y "evidence" no solo están altamente correlacionadas con la variable endógena "overall", sino que también entre ellas. Las elimino para evitar problemas de multicolinealidad.
+
+```{r}
+pisa$issues <- NULL
+pisa$explain <- NULL
+pisa$evidence <- NULL
+```
+
+```{r}
+par(mfrow=c(3,3))
+plot(pisa$overall,pisa$interest)
+plot(pisa$overall,pisa$support)
+plot(pisa$overall,pisa$income)
+plot(pisa$overall,pisa$Health)
+plot(pisa$overall,pisa$edu)
+plot(pisa$overall,pisa$hdi)
+```
+
+En esta representación gráfica se aprecia la posibilidad de que una o varias variables no sean las más adecuadas para realizar una regresión lineal. Por ello, estudio la linealidad de los predictores tras realizar una regresión simple.
+
+```{r}
+library(car)
+rpisa_lineal <- lm(overall ~  interest + support +income + health + edu + hdi, data = pisa)
+crPlots(rpisa_lineal)
+```
+
+Una vez realidada la prueba de linealidad, se observa como una regresión lineal con las variables "interest" y "support"no sería lo ideal de cara a recoger toda la varianza de los datos. Por ello, lo adecuado sería recurrir a una regresión polinómica.
+
+## 6. Cálculo del grado del polinomio
+
+Determinamos el grado del polinomio óptimo para ambas variables, que será aquel que tenga menor error.
+Utilizamos hasta un exponente de 7.
+
+```{r}
+library(boot)
+
+set.seed(814)
+cv_errors_interest <- data.frame(degree=seq(1,7,1), 
+                        error= rep(NA, 7))
+for (i in 1:7) {  
+    glm_interest <- glm(overall~poly(interest, i), data=pisa)
+   cv_errors_interest$error[i] <- cv.glm(pisa, glm_interest, K=10)$delta[1]
+}
+cv_errors_interest
+```
+
+Como podemos observar, el error se va disminuyendo según vamos aumentando el nivel del polinomio. Puesto que queremos evitar overfitting, la intención es usar como máximo el grado 3 o 4. Vista su escasa disparidad de error, nos decantamos por un polinomio cúbico.
+
+
+```{r}
+set.seed(814)
+cv_errors_support <- data.frame(degree=seq(1,7,1), 
+                        error= rep(NA, 7))
+for (i in 1:7) { 
+    glm_support <- glm(overall~poly(support, i), data=pisa)
+   cv_errors_support$error[i] <- cv.glm(pisa, glm_support, K=10)$delta[1]
+}
+cv_errors_support
+```
+
+En este caso, la variable "support" parece tener un menor error en el grado 4. Al igual que en el caso del predictor "interest", la diferencia respecto al 3 es mínima, por lo que también utilizaremos un exponente al cubo.
+
+## 7. Cálculo de los grados de libertad.
+
+Utilizamos la función smooth.splines para calcular por cross-validation los grados de libertad para splines suaves cúbicas, que es el grado de polinomio que vamos a utilizar en ambas varibles.
+
+```{r}
+sspline_interest <- smooth.spline(x = pisa$interest, 
+                                 y = pisa$overall, 
+                                 cv = TRUE)
+sspline_interest$df
+```
+
+```{r}
+sspline_support <- smooth.spline(x = pisa$support, 
+                                 y = pisa$overall, 
+                                 cv = TRUE)
+sspline_support$df
+```
+
+## 7. Modelo GAM.
+
+```{r}
+library(gam)
+gam <- gam(overall ~  s(interest,df=4.72) + s(support,df=2) +income +
+              health + edu + hdi, data = pisa)
+par(mfrow=c(1, 3))
+plot(gam, se=TRUE, col='blue')
+```
+
+```{r}
+summary(gam)
+```
+
+```{r}
+library(gam)
+gam2 <- gam(overall ~  s(interest) + s(support) + s(income) + s(health) 
+            + s(edu) + s(hdi), data = pisa)
+par(mfrow=c(1, 3))
+plot(gam2, se=TRUE, col='red')
+```
+```{r}
+AIC(gam, gam2)
+```
+En este caso nos quedamos con el segundo modelo.
+
