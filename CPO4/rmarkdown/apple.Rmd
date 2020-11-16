@@ -1,0 +1,169 @@
+---
+title: "Series temporales y Apple"
+author: "Iker Aguirre Otaegui"
+date: "11/16/2020"
+output: html_document
+---
+
+
+El siguiente trabajo tiene como objetivo realizar una predicción sobre las ventas para los años 2017 y 2018  de la multinacional americana Apple. Para ello, nos serviremos de la información de las ventas de la compañía en la última década. Utilizaremos el modelo ETS y ARIMA que mejor predicción realicen.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = FALSE}
+library(ggplot2)
+library(dplyr)
+library(xts)
+library(forecast)
+library(tseries)
+library(readr)
+library(skimr)
+```
+
+
+Cargamos la base de datos con la información.
+
+
+```{r}
+apple <- read.csv("IngresosApple.csv", 
+                  sep=";")
+apple
+```
+
+Como se puede observar, los datos abarcan desde el segundo trimestre de 2008 hasta el tercero de 2017.
+
+
+```{r}
+str(apple)
+```
+
+```{r}
+skim(apple)
+```
+
+Creamos una nueva variable "quarters" para poder convertir a xts. Después, convertimos los datos a una serie trimestral.
+
+
+```{r}
+quarters <- seq(as.Date("2008-04-01"), 
+                as.Date("2017-09-30"), 
+                by = "quarter")
+apple_xts <- xts(apple$Ingresos, order.by = quarters)
+apple_xts <- to.quarterly(apple_xts)
+```
+
+```{r}
+apple_xts
+```
+
+
+Ahora, transformamos los datos a zoo.
+
+
+```{r}
+apple_zoo <- as.zoo(apple_xts$apple_xts.Close)
+```
+
+Segmentamos la muestra en dos subgrupos:
+
+1. El primero, la que al uso sería la muestra test, será la que vamos a intentar predecir (2017). No lo usaremos en esta ocasión.
+
+2. El segundo incluirán todos los datos de ventas previos disponibles (2008 - 2016)
+
+```{r}
+length(apple_zoo)
+```
+
+
+Puesto que sabemos que hay un total de 38 trimestres, y que solo tres pertenecen a la muestra de test, podemos separarlos de manera manual.
+
+
+```{r}
+apple_test <- apple_zoo[36:38]
+apple_train <- apple_zoo[1:35]
+```
+
+
+Creamos un dataframe con los ingresos y los trimestres, que más adelante utilizaremos para la representación gráfica de las predicciones.
+
+
+```{r}
+df_apple <- data.frame(value = as.vector(apple_zoo),
+                     time = time(apple_zoo))
+```
+
+
+# Modelo ETS
+
+
+```{r}
+ets_apple <- ets(apple_train)
+summary(ets_apple)
+```
+
+
+Como se puede observar, el modelo sigue la estructura M, A, M:
+
+1. Error multiplicativo..
+
+2. Aditivo en estacionalidad.
+
+3. Multiplicativo en tendencia.
+
+Representamos los residuos con el fin de que se asemeje lo máximo posible al ruido blanco:
+
+
+```{r}
+ggtsdisplay(ets_apple$residuals)
+```
+
+```{r}
+prediccion_ets <- forecast(ets_apple)
+
+ggplot(df_apple) + geom_point(aes(x = time, y = value)) + 
+  geom_line(aes(x = time, y = value)) + geom_forecast(prediccion_ets, 
+                                                  alpha = 0.5) +                         
+      labs(title = "ETS", subtitle = "Predicción APPLE",   
+           x = "Fechas", y = "Ingresos")
+```
+
+# Modelo Arima
+
+
+```{r}
+arima_apple <- auto.arima(apple_train, lambda = 0)
+summary(arima_apple)
+```
+
+
+Al igual que con el modelo ETS, graficamos los residuos del modelo ARIMA con la intención de que se asemeje lo máximo posible al ruido blanco.
+
+
+```{r}
+ggtsdisplay(arima_apple$residuals)
+```
+
+```{r}
+prediccion_arima <- forecast(arima_apple)
+
+ggplot(df_apple) + geom_point(aes(x = time, y = value)) + 
+  geom_line(aes(x = time, y = value)) + geom_forecast(prediccion_arima, 
+                                                  alpha = 0.5) +                         
+      labs(title = "ARIMA", subtitle = "Predicción APPLE",   
+           x = "Fechas", y = "Ingresos")
+```
+
+
+# Comparación y elección de de modelos
+
+
+```{r}
+summary(ets_apple)
+summary(arima_apple)
+```
+
+
+En este caso escogeríamos el modelo ETS, puesto que dispone de menos RMSE. Su tendencia parece más alcista.
