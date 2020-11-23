@@ -1,0 +1,203 @@
+---
+title: "ColgatevsCrest"
+author: "Iker Aguirre Otaegui"
+date: "11/18/2020"
+output: html_document
+---
+
+
+El presente informe pretende desarrollar un breve estudio sobre la influencia que puede tener una campaña de marketing adecuada en la posición de mercado de, no solo la empresa que pone en funcionamiento dicha campaña, sino también de la competencia. Para ello, nos serviremos de la situación en la que se encontraba el sector de la crema dental americano durante los años 50-60.
+
+Durante este periodo, Colgate abarcaba casi el 50% de la cuota de todo el mercado. En 1960 Crest, quien hasta entonces solo gozaba de apenas el 15% total, irrumpiría aún con más fuerza en el mercado tras la recomendación de la ADA (American Dental Association) de sus productos como herramienta importante para cualquier programa de higiene dental. Aprovechando el fuerte ""tirón" que estas declaraciones le daban, Crest comenzó una fuerte campaña publicitaria para incrementar significativamente sus ventas y , por ende, su cuota de mercado.
+
+Además, es objeto de este estudio hacer uso de los modelos ARIMA y ARIMAX para realizar predicciones futuras en escenarios en los que intervienen fuertemente hechos ajenos en la evolución de las series temporales. En este caso, las declaraciones de la ADA.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(xts)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(forecast)
+library(zoo)
+library(TSA)
+library(Hmisc)
+library(astsa)
+```
+
+```{r, include = FALSE}
+#cargamos la base de datos data.xlsx con la informacion pertinente.
+market.share <- read_excel("data.xlsx")
+```
+
+```{r, include = FALSE}
+#estudiamos la posibilidad de que existan valores nulos o duplicados dentro de la muestra. En tal caso, se corregirían.
+#sin embargo, no será necesario realizar ninguna corrección.
+sum(is.na(market.share))
+nrow(market.share[duplicated(market.share),])
+```
+
+```{r, include = FALSE}
+#seleccionamos la información referente a las cuotas de mercado de las dos empresas a analizar: Colgate y Crest
+colgate <- market.share$Colgate
+crest <- market.share$Crest
+```
+
+```{r, include = FALSE}
+#transformamos nuestors datos a una serie temporal con el fin de poder aplicar xts.
+#utilizamos series semanales.
+weeks <- seq(as.Date("1958-01-08"), 
+                as.Date("1963-04-23"), 
+                by = "week")
+xts.colgate <- xts(colgate, order.by = weeks)
+xts.colgate <- to.weekly(xts.colgate)
+xts.crest <- xts(crest, order.by = weeks)
+xts.crest <- to.weekly(xts.crest)
+```
+
+```{r, include = FALSE}
+#convertimos la infformación en objetos zoo.
+zoo.colgate <- as.zoo(xts.colgate$xts.colgate.Close)
+zoo.crest <- as.zoo(xts.crest$xts.crest.Close)
+```
+
+Utilizaremos los datos correspondientes al periodo 1958-1963, que se distribuyen de la siguiente manera:
+
+```{r, echo = FALSE}
+autoplot(zoo.colgate) + 
+  xlab("Weeks") + 
+  ylab("Market share") +
+  geom_vline(mapping = aes(xintercept = as.Date("1960-08-01")), col = "blue")
+```
+
+
+Este gráfico contiene la información concerniente a la evolución de la posición de mercado de Colgate que, como se puede observar, gozaba de una posición competitiva bastante aventajada. Con una tendencia alcista en la primera mitad de 1960, la compañía americana experimentó una abrupta caida tras la recomendación de la adwaf en favor de su competidora directa, Crest. Esta intervención de cararter más permanente destrozó prácticamente la serie temporal y provocó una abrupta caida de la cuota de mercado que parece haberse prolongado a lo largo del tiempo.
+
+```{r, echo = FALSE}
+autoplot(zoo.crest) + 
+  xlab("Weeks") + 
+  ylab("Market share") +
+  geom_vline(mapping = aes(xintercept = as.Date("1960-08-01")), col = "blue")
+```
+
+
+Crest, por el contrario, incrementó su cuota de mercado en más del doble que antes de las declaraciones de la ADA. En ambos casos, podemos apreciar claramente como este suceso se trató de una intervención permamente de escalón.
+
+```{r, include = FALSE}
+#creamos las muestras de train.
+#en este caso abarcan hasta el 1 de enero de 1963, el año que queremos predecir.
+train.crest <- window(zoo.crest, 
+                      start = index(zoo.crest[1]), 
+                      end = as.Date("1963-01-01"))
+train.colgate <- window(zoo.colgate, 
+                        start = index(zoo.colgate[1]), 
+                        end = as.Date("1963-01-01"))
+```
+
+Como ya he mencionado en lineas anteriores, pretendemos realizar una predicción en base a la información dada, en este caso de la cuota de mercado de las compañías en 1963
+
+Para ello, construimos en primer lugar el modelo ARIMA de ambas compañías y buscamos la presencia de outliers en la serie 1958-1962. Estos outliers podrían afectar tanto a la serie en sí misma (aditivos) o al error (innovativos).
+
+```{r, echo = FALSE}
+arima.colgate <- auto.arima(train.colgate)
+arima.colgate
+detectAO(arima.colgate)
+detectIO(arima.colgate)
+```
+
+En este primer caso, correspondiente a Colgate, podemos ver que:
+
+1. No se aprecia la existencia de outliers que puedan distorsionar la información del modelo.
+
+2. Se trata de un ARIMA(0, 1, 1). 
+
+```{r, echo = FALSE}
+arima.crest  <- auto.arima(train.crest)
+arima.crest
+detectAO(arima.crest)
+detectIO(arima.crest)
+```
+
+En contraste, parece que Crest si dispone de un outlier aditivo, en el punto 135, y sufesivos 136 y 138. 
+
+```{r, include = FALSE}
+arimax.colgate <- arimax(train.colgate, 
+                       order = c(0, 1, 1), 
+                      xtransf = data.frame(ADA.Int = 1*(seq(train.colgate) >= 135)), 
+                      xreg = data.frame(out136 = 1*(seq(train.colgate) == 136), 
+                                        out138 = 1*(seq(train.colgate) == 138)),
+                      transfer = list(c(0,0)), 
+                      method = 'ML') 
+```
+
+Contruimos el modelo ARIMAX y realizamos las predicciones para 1963. Introducimos la intervención en el modelo y los outliers.
+
+```{r, include = FALSE}
+#orden (0, 1, 1), e incluimos los outliers.
+arimax.crest <- arimax(train.crest, 
+                       order = c(0, 1, 1), 
+                       xtransf = data.frame(ADA.Int = 1*(seq(train.crest) >= 135)), 
+                       xreg = data.frame(out136 = 1*(seq(train.crest) == 136), 
+                                        out138 = 1*(seq(train.crest) == 138)),
+                       transfer = list(c(0,0)), 
+                       method = 'ML') 
+```
+
+```{r, include = FALSE}
+arimax.colgate <- arimax(train.colgate, 
+                       order = c(0, 1, 1), 
+                      xtransf = data.frame(ADA.Int = 1*(seq(train.colgate) >= 135)), 
+                      xreg = data.frame(out136 = 1*(seq(train.colgate) == 136), 
+                                        out138 = 1*(seq(train.colgate) == 138)),
+                      transfer = list(c(0,0)), 
+                      method = 'ML') 
+```
+
+```{r, echo = FALSE}
+prediccion.crest <- forecast(arima.crest, h = 16)
+autoplot(prediccion.crest) + 
+  ylab("Market share")
+```
+```{r, include = FALSE}
+prediccion.colgate <- forecast(arima.colgate, h = 16)
+autoplot(prediccion.colgate) + 
+  ylab("Market share")
+```
+Como hemos podido observar, se ha podido realiza perfectamente una predicción ajustada a los sucesos ya mencionados, y que el modelo ARIMAX se ajusta a la serie temporal. Se aprecia cómo a mayor el periodo de predicción, mayor el rango de valores "posibles".
+
+Por último, realizamos una transferencia de la serie de Crest a Colgate
+
+```{r, include = FALSE}
+crest.134 <- window(train.crest, end = 134) 
+colgate.134 <- window(train.colgate, end = 134) 
+```
+
+```{r, include = FALSE}
+dcrest.134 <- diff(crest.134) 
+dcolgate.134 <- diff(colgate.134) 
+```
+
+```{r, include = FALSE}
+mod0 <- arimax(dcolgate.134,
+               order = c(0,1,1),
+               include.mean = TRUE,
+               xtransf = dcrest.134,
+               transfer = list(c(0,15)),
+               method = "ML")
+plot(mod0$coef[1:15], type = "h")
+```
+
+```{r, echo = FALSE}
+mod1 <- arimax(dcolgate.134,
+              order = c(0,1,1), 
+              include.mean = TRUE, 
+              fixed = c(NA,NA, 0,0,NA),
+              xtransf = dcrest.134,
+              transfer = list(c(1,2)), 
+              method = "ML")
+plot(mod1$coef[1:15], type = "h")
+```
+
+En conclusión,, podemos ver el importante impacto que tuvo la fuerte campaña publicitaria, con la recomendación por parte de la ADA como piedra angular, por parte de Crest. Además, se aprecia claramente cómo influyó negativamente en la situación de Colgate.
