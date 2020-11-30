@@ -1,0 +1,165 @@
+---
+title: "BMW vs Volkswagen"
+author: "Iker Aguirre Otaegui"
+date: "11/29/2020"
+output: html_document
+---
+
+```{r setup, include= FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+El presente trabajo tiene como objetivo estudiar las series de precios de las acciones de BMW y Volkswagen, de las multinacionales del sector automovilístico. Para ello, nos serviremos de todos los valores registrados desde el 1 de enero de 2014 hasta la fecha. Los datos serán obtenidos mediante el paquete quantmod, el cual extrae la información financiera de plataformas como Google Finance o Yahoo Finance.
+
+Para el estudio, Haremos uso de los modelos Garch, para BMW, y VAR, para ambas compañías.
+
+
+```{r, include = FALSE}
+library("quantmod") 
+library(forecast)
+library("fGarch")
+library(vars)
+```
+
+```{r}
+bmw <- getSymbols("BMW.DE", from = "2014-01-01", to = "2020-11-20", auto.assign = FALSE)
+volks <- getSymbols("VOW.DE", from = "2014-01-01", to = "2020-11-20", auto.assign = FALSE)
+bmw.ad = Ad(bmw)
+volks.ad = Ad(volks)
+```
+
+Para el estudio, Haremos uso de los modelos Garch, para BMW, y VAR, para ambas compañías.
+
+
+## 1. GARCH con BMW
+
+El modelo GARCH es un modelo utilizado frecuentemente en el estudio de la volatilidad en los rendimientos en una serie temporal dada. 
+
+En el siguiente gráfico podemos ver la representación de la evolución del precio, rentabilidad y volatilidad.
+
+
+```{r, include = FALSE}
+bmw.rent = dailyReturn(bmw.ad, type = 'log',leading = FALSE)
+bmw.rent = na.exclude(bmw.rent)
+```
+
+```{r, include = FALSE}
+plot.zoo(cbind(bmw.ad, bmw.rent, bmw.rent^2), 
+         main = " BMW",
+         xlab = "Years",
+         ylab = c("Price","Return", "Volatility"))
+```
+
+```{r}
+t.test(bmw.rent)
+```
+
+
+A continuación, representamos la función de autocorrelación y la autocorrelación parcial.
+
+
+```{r}
+bmw.volproxy = bmw.rent^2 
+tsdisplay(bmw.volproxy) 
+```
+Podemos observar una claro pico de volatilidad en la serie, probablemente resultado del incicio de la pandemia mundial por Covid-19.
+
+Aplicamos el Ljung-Box test para comprobar si las autocorrelaciones son iguales a 0.
+
+
+```{r}
+Box.test(bmw.volproxy,lag=10,  type="Lj")
+Box.test(bmw.volproxy,lag=20,  type="Lj")
+Box.test(bmw.volproxy,lag=40,  type="Lj")
+```
+
+
+Contruimos un modelo ARCH(1).
+
+
+```{r}
+bmw.arch = garchFit(~1 + garch(1,0), data = bmw.rent, trace = F) 
+summary(bmw.arch)
+
+resi = residuals(bmw.arch, standardize = T) 
+```
+
+
+A continuación, creamos un GARCH (1,1)
+
+
+```{r}
+bmw.garch = fGarch::garchFit(~1 + garch(1,1), data = bmw.rent, trace = F) 
+summary(bmw.garch)
+
+resi = residuals(bmw.garch, standardize=T) 
+resi = xts(resi, order.by = index(bmw.rent)) 
+tsdisplay(resi^2) 
+```
+
+Usamos la T-Student en el GARCH(1,1)
+
+
+```{r}
+bmw.t = garchFit(~1 + garch(1,1), data = bmw.rent, trace = F, cond.dist = "std")
+summary(bmw.t)
+```
+
+
+Por último, realizamos la predicción.
+
+
+```{r}
+predict(bmw.t) 
+preda = predict(bmw.t, n.ahead = 10, plot=TRUE, crit_val = 2) 
+predb = predict(bmw.t,n.ahead = 20, plot=TRUE, conf = .9,nx = 100) 
+plot(preda)
+plot(predb)
+```
+
+
+## 2. VAR con BMW y Volkswagen.
+
+EL vector autorregresivo se utiliza para estudiar la relación bidireccional entre las variables, es decir, todas influyen en todas. Puesto que se aplica a series estacionarias, utilizaremos las diferencias para realizar la conversión. Además, convertimos a datos mensuales.
+
+```{r}
+bmw.ret <- diff(log(bmw.ad))
+volks.ret <- diff(log(volks.ad))
+```
+
+```{r}
+bmw.m <- to.monthly(bmw.ret)$bmw.ret.Close
+volks.m <- to.monthly(volks.ret)$volks.ret.Close
+```
+
+```{r, include = FALSE}
+auto = na.exclude(cbind(bmw.m, volks.m))
+```
+
+
+Utilizamos el criterio del menor AIC para seleccionar el número de retardos.
+
+
+```{r}
+VARselect(auto)
+```
+
+Como podemos ver, utilizaremos un solo retardo.
+
+```{r}
+var = VAR(auto)
+summary(var)
+```
+
+Realizamos la predicción y obtenemos representamos las funciones impulso-respuesta.
+```{r}
+var.pred <- predict(var, n.ahead = 10, ci = 0.95)
+Phi(var)
+plot(var.pred)
+````
+
+```{r}
+var.irf <- irf(var) 
+plot(var.irf)
+```
